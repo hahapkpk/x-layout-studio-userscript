@@ -26,6 +26,19 @@ https://raw.githubusercontent.com/hahapkpk/x-layout-studio-userscript/main/x-lay
 
 ## Changelog
 
+### 0.2.1
+
+- **Compact nav no longer eats the icons.** The old rule hid `nav a > span > span:last-child`,
+  which on the XDS markup is the element wrapping the icon as well as the label, so the
+  whole sidebar went blank. XDS now leans on X's own collapse switch
+  (`--x-sidebar-expanded: 0`), and labels are flagged at runtime by finding the outermost
+  element inside each nav item that holds text and contains no `<svg>` — an icon can never
+  be caught by that test. Verified: icons 4/4 visible, labels hidden, nav 272 → 88px.
+- **Settings can no longer be clobbered.** `pagehide`/`visibilitychange` used to write the
+  in-memory settings unconditionally, so a stale tab could overwrite a change just made in
+  another tab (or on the page you navigated away from). Writes are now gated on a dirty
+  flag and only flush when something actually changed.
+
 ### 0.2.0
 
 - **Works on both X frontends.** X flips accounts between the new XDS/Tailwind shell

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Studio
 // @namespace    local.codex.x-layout-studio
-// @version      0.2.0
+// @version      0.2.1
 // @description  Drag to resize the X timeline column, reclaim the empty right rail, compact the nav, and declutter the timeline.
 // @match        https://x.com/*
 // @match        https://pro.x.com/*
@@ -363,13 +363,23 @@ ${SEL.mainXds} { margin-left: auto !important; margin-right: auto !important; }
 
     if (settings.compactNav) {
       out.push(`
-${SEL.navShell} { width: 72px !important; }
-nav a, nav button { width: 48px !important; justify-content: center !important; }
-nav a > span > span:last-child, nav button > span > span:last-child { display: none !important; }
+/* XDS: use X's own collapse switch. --x-sidebar-expanded drives both the nav
+   width (72px + 184px * var) and the link width, and X hides labels itself at
+   that width. */
+${SEL.navShell} { --x-sidebar-expanded: 0 !important; width: 72px !important; }
+/* RNW banner is a fixed 275px; shrink it. Labels are hidden via
+   [data-xls-navlabel] below, never by class — that is what blanked the icons. */
 ${SEL.banner} { width: 88px !important; }
-${SEL.banner} span[class*="r-poiln3"] { display: none !important; }
+${SEL.banner} nav a, ${SEL.banner} nav button {
+  width: 48px !important;
+  justify-content: center !important;
+}
 `);
     }
+
+    // Label hiding works for both shells: the flag is set by applyCompactNav(),
+    // which only ever marks elements that hold text and contain no <svg>.
+    out.push('[data-xls-navlabel="1"] { display: none !important; }');
 
     if (settings.hideTabs) {
       out.push(`
@@ -413,6 +423,7 @@ div[class*="border-b-[0.5px]"] {
    */
   function applyWidth(px) {
     settings.mainWidth = px;
+    dirty = true;
     renderStyles();
     syncPanel();
   }
@@ -422,19 +433,25 @@ div[class*="border-b-[0.5px]"] {
     syncPanel();
   }
 
+  let dirty = false;
+
   function save() {
     store.write(settings);
+    dirty = false;
   }
 
-  // Belt and braces: a pending debounce must not be lost when the tab goes away.
-  window.addEventListener('pagehide', () => { try { save(); } catch (_) {} });
+  // Only flush when something actually changed. An unconditional save here lets
+  // a stale tab (or the page you are navigating away from) overwrite settings
+  // that were just written elsewhere.
+  window.addEventListener('pagehide', () => { try { if (dirty) save(); } catch (_) {} });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') { try { save(); } catch (_) {} }
+    if (document.visibilityState === 'hidden' && dirty) { try { save(); } catch (_) {} }
   });
 
   function setSetting(key, value) {
     settings[key] = value;
     if (key === 'mainWidth') settings.mainWidth = clampWidth(value);
+    dirty = true;
     applySettings();
     save();
   }
@@ -607,6 +624,34 @@ div[class*="border-b-[0.5px]"] {
     }
   }
 
+  // ---- compact nav ------------------------------------------------------------
+  /**
+   * Hiding nav labels by class name is what blanked the icons earlier: the class
+   * we targeted also wrapped the icon container. Instead, flag only the
+   * outermost element inside each nav item that holds text and contains no
+   * <svg>, so the icon can never be caught by it.
+   */
+  function applyCompactNav() {
+    const navs = document.querySelectorAll('nav, header[role="banner"] nav');
+    for (const nav of navs) {
+      for (const item of nav.querySelectorAll('a, button')) {
+        let label = null;
+        for (const el of item.querySelectorAll('*')) {
+          if (el.querySelector('svg')) continue;
+          if (!(el.textContent || '').trim()) continue;
+          label = el;
+          break;
+        }
+        if (!label) continue;
+        if (settings.compactNav) {
+          if (label.dataset.xlsNavlabel !== '1') label.setAttribute('data-xls-navlabel', '1');
+        } else if (label.hasAttribute('data-xls-navlabel')) {
+          label.removeAttribute('data-xls-navlabel');
+        }
+      }
+    }
+  }
+
   // ---- promoted-post tagging ------------------------------------------------
   // X labels ads with a small element, e.g. "来自 nordace.com 的广告",
   // "Promoted by Acme", "Sponsored". The domain may itself be a nested link, so
@@ -657,6 +702,7 @@ div[class*="border-b-[0.5px]"] {
     applySettings();
     buildPanel();
     ensureHandle();
+    applyCompactNav();
     tagPromoted();
   }
 
@@ -691,6 +737,7 @@ div[class*="border-b-[0.5px]"] {
         scheduleBoot();
       }
       tagPromoted(); // new ads stream in while scrolling
+      applyCompactNav(); // React re-creates nav items on re-render
     }, 1000);
 
     window.addEventListener('resize', () => {
