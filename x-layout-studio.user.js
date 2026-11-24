@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Studio
 // @namespace    local.codex.x-layout-studio
-// @version      0.2.2
+// @version      0.3.0
 // @description  Drag to resize the X timeline column, reclaim the empty right rail, compact the nav, and declutter the timeline.
 // @match        https://x.com/*
 // @match        https://pro.x.com/*
@@ -60,6 +60,8 @@
     noBorders: false,   // remove the column separators
     hidePromo: false,   // hide promoted posts
     panelOpen: false,
+    fabTop: 50,         // % down the viewport; the button is draggable
+    hideRules: [],      // [{ selector, label }] from the element picker
   };
 
   const MIN_W = 360;
@@ -193,11 +195,43 @@
 }
 body.${SCRIPT_ID}-resizing { cursor: col-resize !important; user-select: none !important; }
 
+/* --- element picker ------------------------------------------------------- */
+.${SCRIPT_ID}-pickbox {
+  position: fixed;
+  z-index: 2147483646;
+  pointer-events: none;
+  border: 2px solid rgb(29, 155, 240);
+  background: rgba(29, 155, 240, .12);
+  border-radius: 4px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .28);
+  display: none;
+}
+.${SCRIPT_ID}-pickbox.${SCRIPT_ID}-on { display: block; }
+.${SCRIPT_ID}-picktip {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  display: none;
+  max-width: 420px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, .92);
+  color: #e7e9ea;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.${SCRIPT_ID}-picktip.${SCRIPT_ID}-on { display: block; }
+body.${SCRIPT_ID}-picking, body.${SCRIPT_ID}-picking * { cursor: crosshair !important; }
+.${SCRIPT_ID}-danger { border-color: rgba(244, 33, 46, .5) !important; color: #f4212e !important; }
+.${SCRIPT_ID}-danger:hover { background: rgba(244, 33, 46, .85) !important; color: #fff !important; border-color: transparent !important; }
+
 /* --- floating panel ------------------------------------------------------- */
 .${SCRIPT_ID}-fab {
   position: fixed;
   right: 14px;
-  top: 50%;
+  top: var(--xls-fab-top, 50%);
   transform: translateY(-50%);
   z-index: 2147483647;
   width: 38px;
@@ -221,7 +255,7 @@ body.${SCRIPT_ID}-resizing { cursor: col-resize !important; user-select: none !i
 .${SCRIPT_ID}-panel {
   position: fixed;
   right: 60px;
-  top: 50%;
+  top: var(--xls-fab-top, 50%);
   transform: translateY(-50%) translateX(8px);
   z-index: 2147483647;
   width: 268px;
@@ -350,7 +384,7 @@ body.${SCRIPT_ID}-resizing { cursor: col-resize !important; user-select: none !i
     // width the user chose on a wide monitor.
     const w = `${clampWidth(settings.mainWidth)}px`;
     const out = [
-      `:root { --xvl-main: ${w}; --x-timeline-max-width: ${w}; }`,
+      `:root { --xvl-main: ${w}; --x-timeline-max-width: ${w}; --xls-fab-top: ${Number(settings.fabTop) || 50}%; }`,
       BASE_CSS,
     ];
 
@@ -405,6 +439,13 @@ div[class*="border-b-[0.5px]"] {
     }
 
     if (settings.hidePromo) out.push('[data-xvl-promo="1"] { display: none !important; }');
+
+    // Selector-based hide rules from the built-in element picker.
+    const rules = Array.isArray(settings.hideRules) ? settings.hideRules : [];
+    for (const rule of rules) {
+      if (!rule || !rule.selector) continue;
+      out.push(`${rule.selector} { display: none !important; }`);
+    }
 
     return out.join('\n');
   }
@@ -568,7 +609,11 @@ div[class*="border-b-[0.5px]"] {
         <button type="button" class="${SCRIPT_ID}-btn" data-preset="wide">全宽模式</button>
         <button type="button" class="${SCRIPT_ID}-btn" data-reset>重置</button>
       </div>
-      <div class="${SCRIPT_ID}-hint">拖动时间线右边缘可自由调宽，双击边缘恢复默认。</div>
+      <div class="${SCRIPT_ID}-actions" style="border-top:0;padding-top:0;margin-top:8px">
+        <button type="button" class="${SCRIPT_ID}-btn" data-pick>选取隐藏</button>
+        <button type="button" class="${SCRIPT_ID}-btn ${SCRIPT_ID}-danger" data-clear>清除隐藏 (<span data-rulecount>0</span>)</button>
+      </div>
+      <div class="${SCRIPT_ID}-hint">拖动时间线右边缘可自由调宽，双击边缘恢复默认。点「选取隐藏」后移动到要隐藏的元素上单击；Esc 取消。悬浮按钮可上下拖动。</div>
     `;
 
     const rowsHost = panelEl.querySelector('[data-rows]');
@@ -603,7 +648,37 @@ div[class*="border-b-[0.5px]"] {
       save();
     });
 
+    panelEl.querySelector('[data-pick]').addEventListener('click', () => startPicking());
+    panelEl.querySelector('[data-clear]').addEventListener('click', () => clearHideRules());
+
+    // The button is draggable: it may sit on top of another extension's launcher,
+    // and moving it is the only way out of that overlap. A drag suppresses the
+    // click so the panel does not pop open when you finish repositioning.
+    let fabMoved = false;
+    fabEl.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0) return;
+      const startY = e.clientY;
+      const startCenter = fabEl.getBoundingClientRect().top + fabEl.offsetHeight / 2;
+      let moved = false;
+      const move = (ev) => {
+        const dy = ev.clientY - startY;
+        if (Math.abs(dy) > 4) moved = true;
+        if (!moved) return;
+        const pct = ((startCenter + dy) / window.innerHeight) * 100;
+        settings.fabTop = Math.round(Math.min(96, Math.max(4, pct)) * 10) / 10;
+        renderStyles();
+      };
+      const up = () => {
+        window.removeEventListener('pointermove', move, true);
+        window.removeEventListener('pointerup', up, true);
+        if (moved) { fabMoved = true; save(); }
+      };
+      window.addEventListener('pointermove', move, true);
+      window.addEventListener('pointerup', up, true);
+    });
+
     fabEl.addEventListener('click', () => {
+      if (fabMoved) { fabMoved = false; return; }
       // Self-heal: if the panel was removed from the DOM (shell re-render, another
       // copy's cleanup) rebuild it and open it, instead of toggling a dead handle.
       if (!panelEl || !panelEl.isConnected) {
@@ -654,6 +729,8 @@ div[class*="border-b-[0.5px]"] {
     const range = panelEl.querySelector('[data-range]');
     if (val) val.textContent = `${settings.mainWidth}px`;
     if (range && Number(range.value) !== settings.mainWidth) range.value = String(settings.mainWidth);
+    const count = panelEl.querySelector('[data-rulecount]');
+    if (count) count.textContent = String((Array.isArray(settings.hideRules) ? settings.hideRules : []).length);
     panelEl.classList.toggle(`${SCRIPT_ID}-open`, !!settings.panelOpen);
     for (const row of panelEl.querySelectorAll(`.${SCRIPT_ID}-row`)) {
       row.classList.toggle(`${SCRIPT_ID}-on`, !!settings[row.dataset.key]);
@@ -686,6 +763,131 @@ div[class*="border-b-[0.5px]"] {
         }
       }
     }
+  }
+
+  // ---- element picker --------------------------------------------------------
+  // Built in so hiding arbitrary chunks of X does not depend on a third-party
+  // script. Pick an element, it becomes a stored CSS rule.
+  let pickBox = null;
+  let pickTip = null;
+  let picking = false;
+  let pickTarget = null;
+
+  function selectorFor(el) {
+    if (!el || el === document.body || el === document.documentElement) return '';
+    if (el.id) return `#${CSS.escape(el.id)}`;
+    const tid = el.getAttribute('data-testid');
+    if (tid) return `[data-testid="${tid.replace(/"/g, '')}"]`;
+    const aria = (el.getAttribute('aria-label') || '').trim();
+    if (aria && aria.length <= 40) return `${el.tagName.toLowerCase()}[aria-label="${aria.replace(/"/g, '')}"]`;
+    // Fall back to a structural path. X re-renders constantly, so keep it short.
+    const parts = [];
+    let cur = el;
+    for (let depth = 0; cur && cur !== document.body && depth < 5; depth++) {
+      let part = cur.tagName.toLowerCase();
+      const parent = cur.parentElement;
+      if (parent) part += `:nth-child(${[...parent.children].indexOf(cur) + 1})`;
+      parts.unshift(part);
+      cur = parent;
+    }
+    return parts.join(' > ');
+  }
+
+  function ensurePickUi() {
+    if (!pickBox) {
+      pickBox = document.createElement('div');
+      pickBox.className = `${SCRIPT_ID}-pickbox`;
+      document.body.appendChild(pickBox);
+    }
+    if (!pickTip) {
+      pickTip = document.createElement('div');
+      pickTip.className = `${SCRIPT_ID}-picktip`;
+      document.body.appendChild(pickTip);
+    }
+  }
+
+  function hidePickUi() {
+    pickTarget = null;
+    pickBox?.classList.remove(`${SCRIPT_ID}-on`);
+    pickTip?.classList.remove(`${SCRIPT_ID}-on`);
+  }
+
+  function startPicking() {
+    ensurePickUi();
+    picking = true;
+    document.body.classList.add(`${SCRIPT_ID}-picking`);
+    if (panelEl) panelEl.classList.remove(`${SCRIPT_ID}-open`);
+    if (fabEl) fabEl.style.opacity = '.25';
+  }
+
+  function stopPicking() {
+    picking = false;
+    document.body.classList.remove(`${SCRIPT_ID}-picking`);
+    if (fabEl) fabEl.style.opacity = '';
+    hidePickUi();
+  }
+
+  function addHideRule(selector, label) {
+    if (!selector) return;
+    const rules = Array.isArray(settings.hideRules) ? settings.hideRules.slice() : [];
+    if (!rules.some((r) => r.selector === selector)) rules.push({ selector, label: label || selector });
+    settings.hideRules = rules;
+    dirty = true;
+    applySettings();
+    save();
+  }
+
+  function clearHideRules() {
+    settings.hideRules = [];
+    dirty = true;
+    applySettings();
+    save();
+  }
+
+  function bindPicker() {
+    if (bindPicker.done) return;
+    bindPicker.done = true;
+
+    document.addEventListener('mousemove', (e) => {
+      if (!picking) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      if (!el || el.closest?.(`.${SCRIPT_ID}-panel, .${SCRIPT_ID}-fab, .${SCRIPT_ID}-pickbox, .${SCRIPT_ID}-picktip`)) {
+        hidePickUi();
+        return;
+      }
+      pickTarget = el;
+      const r = el.getBoundingClientRect();
+      pickBox.style.left = `${r.left}px`;
+      pickBox.style.top = `${r.top}px`;
+      pickBox.style.width = `${r.width}px`;
+      pickBox.style.height = `${r.height}px`;
+      pickBox.classList.add(`${SCRIPT_ID}-on`);
+      const sel = selectorFor(el);
+      pickTip.textContent = sel || '(该元素不能选取)';
+      pickTip.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - 430))}px`;
+      pickTip.style.top = `${Math.max(4, r.top - 26)}px`;
+      pickTip.classList.add(`${SCRIPT_ID}-on`);
+    }, true);
+
+    document.addEventListener('click', (e) => {
+      if (!picking) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.target.closest?.(`.${SCRIPT_ID}-panel, .${SCRIPT_ID}-fab`)) return;
+      const el = pickTarget || e.target;
+      const sel = selectorFor(el);
+      if (sel) addHideRule(sel, (el.getAttribute('aria-label') || el.tagName.toLowerCase()).slice(0, 40));
+      stopPicking();
+      window.setTimeout(() => { if (settings.panelOpen) applySettings(); }, 0);
+    }, true);
+
+    document.addEventListener('keydown', (e) => {
+      if (picking && e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        stopPicking();
+      }
+    }, true);
   }
 
   // ---- promoted-post tagging ------------------------------------------------
@@ -738,6 +940,7 @@ div[class*="border-b-[0.5px]"] {
     applySettings();
     buildPanel();
     bindHotkey();
+    bindPicker();
     ensureHandle();
     applyCompactNav();
     tagPromoted();

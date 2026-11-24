@@ -26,6 +26,18 @@ https://raw.githubusercontent.com/hahapkpk/x-layout-studio-userscript/main/x-lay
 
 ## Changelog
 
+### 0.3.0
+
+- **Built-in element picker.** Click 选取隐藏, hover any element, click it — it is
+  hidden and the selector is stored. `Esc` cancels, 清除隐藏 removes every rule,
+  and the count sits on the button. No third-party blocker needed.
+- **The floating button is draggable.** It may sit on top of another extension's
+  launcher; drag it up or down and the position persists. A drag does not open the
+  panel.
+- Selector strategy, in order: `#id` → `[data-testid]` → `[aria-label]` →
+  a short `:nth-child` path. The `aria-label` form is what makes "hide this nav
+  item / this button everywhere" work.
+
 ### 0.2.2
 
 - **Panel can no longer get stuck closed.** It syncs its open state explicitly at
