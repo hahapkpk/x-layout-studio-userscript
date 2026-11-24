@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Studio
 // @namespace    local.codex.x-layout-studio
-// @version      0.1.0
+// @version      0.1.1
 // @description  Drag to resize the X timeline column, reclaim the empty right rail, compact the nav, and declutter the timeline.
 // @match        https://x.com/*
 // @match        https://pro.x.com/*
@@ -44,6 +44,12 @@
   const SCRIPT_ID = 'xls';
   const DEBUG = false;
   const log = (...a) => DEBUG && console.log(`[${SCRIPT_ID}]`, ...a);
+
+  // Single instance only. Two copies (e.g. a Tampermonkey install plus a manual
+  // injection) would each rewrite the same <style> element from their own
+  // settings, so toggles would visibly flap.
+  if (document.documentElement.dataset.xlsBooted === '1') return;
+  document.documentElement.dataset.xlsBooted = '1';
 
   const DEFAULTS = {
     mainWidth: 700,     // px, user-draggable
@@ -349,7 +355,7 @@ main[class*="border-normal"], ${SEL.aside}, div[class*="border-b-[0.5px]"] {
 `);
     }
 
-    if (settings.hidePromo) out.push('article[data-xvl-promo="1"] { display: none !important; }');
+    if (settings.hidePromo) out.push('[data-xvl-promo="1"] { display: none !important; }');
 
     return out.join('\n');
   }
@@ -536,23 +542,44 @@ main[class*="border-normal"], ${SEL.aside}, div[class*="border-b-[0.5px]"] {
   }
 
   // ---- promoted-post tagging ------------------------------------------------
-  // X labels ads with a single leaf node, e.g. "来自 nordace.com 的广告" or
-  // "Promoted by Acme" / "Sponsored". Match that node, not the whole article.
+  // X labels ads with a small element, e.g. "来自 nordace.com 的广告",
+  // "Promoted by Acme", "Sponsored". The domain may itself be a nested link, so
+  // match on any element whose ENTIRE text is the label (the anchors make it
+  // unambiguous), instead of requiring a childless leaf node.
   const AD_LABEL = /^(?:来自\s*\S.*?\s*的广告|Promoted(?:\s+by\s+.+)?|Sponsored(?:\s+by\s+.+)?|广告|推广|赞助|Ad)$/i;
+
+  /** Nearest timeline cell for an element: a post, else the virtualised row. */
+  function adCellOf(el) {
+    const article = el.closest('article');
+    if (article) return article;
+    const cell = el.closest('div[class*="outline-focus"]');
+    if (!cell) return null;
+    // Safety net: never hide something larger than a single post. If X ever
+    // reshapes the shell so the fallback matches a page-level container, this
+    // refuses instead of blanking the timeline.
+    const rect = cell.getBoundingClientRect();
+    if (rect.height > 3000 || rect.width > 1600) return null;
+    return cell;
+  }
+
+  function isAdCell(cell) {
+    for (const el of cell.querySelectorAll('div, span, a')) {
+      const text = (el.textContent || '').trim();
+      if (!text || text.length > 60) continue;
+      if (AD_LABEL.test(text)) return true;
+    }
+    return false;
+  }
 
   function tagPromoted() {
     if (!settings.hidePromo) return;
-    for (const article of document.querySelectorAll('article')) {
-      if (article.dataset.xvlPromo) continue;
-      const candidates = article.querySelectorAll('span, div');
-      for (const el of candidates) {
-        if (el.children.length !== 0) continue;
-        const text = (el.textContent || '').trim();
-        if (text && text.length <= 40 && AD_LABEL.test(text)) {
-          article.dataset.xvlPromo = '1';
-          break;
-        }
-      }
+    // Only look at label-sized elements, then walk up to the cell that owns them.
+    for (const el of document.querySelectorAll('div, span, a')) {
+      const text = (el.textContent || '').trim();
+      if (!text || text.length > 60 || !AD_LABEL.test(text)) continue;
+      const cell = adCellOf(el);
+      if (!cell || cell.dataset.xvlPromo) continue;
+      if (isAdCell(cell)) cell.dataset.xvlPromo = '1';
     }
   }
 

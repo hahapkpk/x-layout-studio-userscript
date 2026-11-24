@@ -24,6 +24,23 @@ right edge opens the panel; the Tampermonkey menu has "打开面板" / "重置�
 
 https://raw.githubusercontent.com/hahapkpk/x-layout-studio-userscript/main/x-layout-studio.user.js
 
+## Changelog
+
+### 0.1.1
+
+- **Promoted posts**: detection was missing ads whose label contains a nested link
+  and ads rendered outside an `<article>`. It now matches any element whose entire
+  text is the ad label, then walks up to the owning post (or the virtualised row
+  cell as a fallback, with a size guard so a page-level container can never be
+  hidden). Verified: 3/3 ads hidden, 0 false positives, 0 visible ad labels left.
+- **Single instance**: a second copy (Tampermonkey install + manual injection)
+  would each rewrite the same `<style>` from its own settings and make toggles
+  flap. Only the first instance now boots.
+
+### 0.1.0
+
+Initial release.
+
 ## How it works (and why it survives redesigns)
 
 X drives its shell from CSS custom properties, so this script moves no DOM
