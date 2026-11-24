@@ -1,11 +1,15 @@
 // ==UserScript==
 // @name         X Layout Studio
 // @namespace    local.codex.x-layout-studio
-// @version      0.3.0
+// @version      0.3.1
 // @description  Drag to resize the X timeline column, reclaim the empty right rail, compact the nav, and declutter the timeline.
 // @match        https://x.com/*
 // @match        https://pro.x.com/*
 // @run-at       document-start
+// @homepageURL  https://github.com/hahapkpk/x-layout-studio-userscript
+// @supportURL   https://github.com/hahapkpk/x-layout-studio-userscript/issues
+// @downloadURL  https://cdn.jsdelivr.net/gh/hahapkpk/x-layout-studio-userscript@main/x-layout-studio.user.js
+// @updateURL    https://cdn.jsdelivr.net/gh/hahapkpk/x-layout-studio-userscript@main/x-layout-studio.user.js
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
