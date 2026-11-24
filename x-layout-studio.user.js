@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Studio
 // @namespace    local.codex.x-layout-studio
-// @version      0.2.1
+// @version      0.2.2
 // @description  Drag to resize the X timeline column, reclaim the empty right rail, compact the nav, and declutter the timeline.
 // @match        https://x.com/*
 // @match        https://pro.x.com/*
@@ -199,7 +199,7 @@ body.${SCRIPT_ID}-resizing { cursor: col-resize !important; user-select: none !i
   right: 14px;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 2147483000;
+  z-index: 2147483647;
   width: 38px;
   height: 38px;
   border-radius: 999px;
@@ -210,6 +210,7 @@ body.${SCRIPT_ID}-resizing { cursor: col-resize !important; user-select: none !i
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  pointer-events: auto !important;
   backdrop-filter: blur(12px);
   box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
   transition: background 140ms ease, transform 140ms ease;
@@ -222,7 +223,7 @@ body.${SCRIPT_ID}-resizing { cursor: col-resize !important; user-select: none !i
   right: 60px;
   top: 50%;
   transform: translateY(-50%) translateX(8px);
-  z-index: 2147483000;
+  z-index: 2147483647;
   width: 268px;
   padding: 14px;
   border-radius: 14px;
@@ -603,13 +604,48 @@ div[class*="border-b-[0.5px]"] {
     });
 
     fabEl.addEventListener('click', () => {
+      // Self-heal: if the panel was removed from the DOM (shell re-render, another
+      // copy's cleanup) rebuild it and open it, instead of toggling a dead handle.
+      if (!panelEl || !panelEl.isConnected) {
+        settings.panelOpen = true;
+        buildPanel();
+        applySettings();
+        save();
+        return;
+      }
       settings.panelOpen = !settings.panelOpen;
+      applySettings();
+      save();
+    });
+
+    // Fallbacks in case the button is ever covered by X's own overlay.
+    fabEl.addEventListener('dblclick', (e) => {
+      e.preventDefault();
+      settings.panelOpen = true;
       applySettings();
       save();
     });
 
     document.body.appendChild(fabEl);
     document.body.appendChild(panelEl);
+    // Explicit sync: do not rely on the mutation observer happening to re-boot.
+    syncPanel();
+  }
+
+  // Bound once for the whole instance: buildPanel() can rebuild the DOM, and a
+  // per-build listener would register duplicates that cancel each other out.
+  function bindHotkey() {
+    if (bindHotkey.done) return;
+    bindHotkey.done = true;
+    document.addEventListener('keydown', (e) => {
+      if (e.altKey && e.shiftKey && (e.key === 'X' || e.key === 'x')) {
+        e.preventDefault();
+        if (!panelEl || !panelEl.isConnected) buildPanel();
+        settings.panelOpen = !settings.panelOpen;
+        applySettings();
+        save();
+      }
+    });
   }
 
   function syncPanel() {
@@ -701,6 +737,7 @@ div[class*="border-b-[0.5px]"] {
     renderStyles();
     applySettings();
     buildPanel();
+    bindHotkey();
     ensureHandle();
     applyCompactNav();
     tagPromoted();

@@ -26,6 +26,16 @@ https://raw.githubusercontent.com/hahapkpk/x-layout-studio-userscript/main/x-lay
 
 ## Changelog
 
+### 0.2.2
+
+- **Panel can no longer get stuck closed.** It syncs its open state explicitly at
+  build time, rebuilds itself if something removed it from the DOM, and opens
+  rather than toggling when that happens.
+- Fallbacks when the floating button is covered: double-click it, or press
+  **Alt+Shift+X** to toggle the panel. The hotkey is bound once per instance so a
+  rebuild can't register a duplicate that cancels itself out.
+- z-index raised to the maximum for the button and panel.
+
 ### 0.2.1
 
 - **Compact nav no longer eats the icons.** The old rule hid `nav a > span > span:last-child`,
