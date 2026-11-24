@@ -26,6 +26,23 @@ https://raw.githubusercontent.com/hahapkpk/x-layout-studio-userscript/main/x-lay
 
 ## Changelog
 
+### 0.2.0
+
+- **Works on both X frontends.** X flips accounts between the new XDS/Tailwind shell
+  (CSS variables + grid) and the older React-Native-Web shell (`primaryColumn`, atomic
+  classes, fixed 600px). 0.1.x only understood XDS, so on a legacy-shell account the
+  script booted but changed nothing. The RNW shell is now handled by
+  `primaryColumn{max-width,width}` + clearing the `r-1ye8kvj` max-width wrapper.
+- **Width persistence hardened.** During a drag the handle is only 5px wide, so the
+  pointer leaves it immediately; the old code listened on the handle itself and could
+  miss `pointerup` entirely, never saving. Listeners now live on `window` for the
+  duration of the drag, the width is written on a 120ms debounce while dragging, and
+  again on `pointerup` / `pagehide` / `visibilitychange`.
+- The stored width is applied on every load and survives refresh. A narrower window
+  clamps what is *rendered* without overwriting the stored preference.
+- Orphan UI from a previous copy is removed at boot, so a stale panel can no longer
+  show numbers the live instance does not control.
+
 ### 0.1.1
 
 - **Promoted posts**: detection was missing ads whose label contains a nested link

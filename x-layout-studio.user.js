@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         X Layout Studio
 // @namespace    local.codex.x-layout-studio
-// @version      0.1.1
+// @version      0.2.0
 // @description  Drag to resize the X timeline column, reclaim the empty right rail, compact the nav, and declutter the timeline.
 // @match        https://x.com/*
 // @match        https://pro.x.com/*
@@ -91,18 +91,28 @@
   let settings = store.read();
 
   // ---- shell helpers --------------------------------------------------------
+  // X flips accounts between two frontends: the XDS/Tailwind shell (CSS vars +
+  // grid) and the older React-Native-Web shell (atomic classes + fixed widths).
+  // Every rule below therefore covers BOTH; only one set matches at a time.
   const SEL = {
-    main: 'main[class*="max-w-(--x-main-column-width)"]',
+    // XDS
+    mainXds: 'main[class*="max-w-(--x-main-column-width)"]',
     grid: 'div[class*="lg:grid-cols-[var(--x-main-column-width)"]',
     navShell: 'div[class*="w-[calc(72px"]',
-    aside: 'aside[class*="lg:flex"]',
-    tabHeader: 'div[class*="border-b-[0.5px]"]:has([role="tablist"])',
-    viewCount: 'a[aria-label="查看次数"], a[aria-label="View post analytics"]',
+    asideXds: 'aside[class*="lg:flex"]',
+    tabHeaderXds: 'div[class*="border-b-[0.5px]"]:has([role="tablist"])',
+    // legacy RNW
+    mainRwn: 'div[data-testid="primaryColumn"]',
+    asideRwn: 'div[data-testid="sidebarColumn"]',
+    banner: 'header[role="banner"]',
+    // shared
+    tablist: '[role="tablist"]',
+    viewCount: 'a[aria-label="查看次数"], a[aria-label="View post analytics"], a[href$="/analytics"]',
   };
 
-  const getMain = () => document.querySelector(SEL.main);
+  /** The element whose width the user drags. XDS main, else legacy primaryColumn. */
+  const getMain = () => document.querySelector(SEL.mainXds) || document.querySelector(SEL.mainRwn);
   const getGrid = () => document.querySelector(SEL.grid);
-  const getNavShell = () => document.querySelector(SEL.navShell);
 
   /** Usable width for the main column: from its left edge to the viewport edge. */
   function availableWidth() {
@@ -123,9 +133,10 @@
   // <html>'s className on re-render and would wipe any state classes we set.
   const BASE_CSS = `
 
-/* --- main column width: the only thing we override on the shell ----------- */
+/* --- main column width ----------------------------------------------------- */
 @media (min-width: 1024px) {
-  ${SEL.main} {
+  /* XDS shell: variables + grid track */
+  ${SEL.mainXds} {
     max-width: var(--xvl-main) !important;
     position: relative;
   }
@@ -136,9 +147,20 @@
   div:has(> ${SEL.grid}), div:has(> div > ${SEL.grid}) {
     max-width: none !important;
   }
-  /* belt and braces: if X ever stops honouring the variable on this wrapper */
+  /* belt and braces: if X stops honouring the variable on this wrapper */
   div[class*="max-w-[var(--x-timeline-max-width"] {
     max-width: var(--xvl-main) !important;
+  }
+
+  /* legacy RNW shell: fixed max-width on the column and on its content wrapper
+     (r-1ye8kvj is the atomic class RNW emits for max-width:600px) */
+  ${SEL.mainRwn} {
+    max-width: var(--xvl-main) !important;
+    width: var(--xvl-main) !important;
+    position: relative;
+  }
+  ${SEL.mainRwn} div[class*="r-1ye8kvj"] {
+    max-width: none !important;
   }
 }
 
@@ -322,7 +344,10 @@ body.${SCRIPT_ID}-resizing { cursor: col-resize !important; user-select: none !i
 
   /** Full stylesheet as a function of the current settings (no state classes). */
   function buildCss() {
-    const w = `${settings.mainWidth}px`;
+    // Apply the stored width clamped to what this viewport allows, but keep the
+    // raw preference in storage: a narrow window must not permanently shrink a
+    // width the user chose on a wide monitor.
+    const w = `${clampWidth(settings.mainWidth)}px`;
     const out = [
       `:root { --xvl-main: ${w}; --x-timeline-max-width: ${w}; }`,
       BASE_CSS,
@@ -331,8 +356,8 @@ body.${SCRIPT_ID}-resizing { cursor: col-resize !important; user-select: none !i
     if (settings.railHidden) {
       out.push(`
 ${SEL.grid} { grid-template-columns: minmax(0, 1fr) 0px !important; }
-${SEL.aside} { display: none !important; }
-${SEL.main} { margin-left: auto !important; margin-right: auto !important; }
+${SEL.asideXds}, ${SEL.asideRwn} { display: none !important; }
+${SEL.mainXds} { margin-left: auto !important; margin-right: auto !important; }
 `);
     }
 
@@ -341,15 +366,28 @@ ${SEL.main} { margin-left: auto !important; margin-right: auto !important; }
 ${SEL.navShell} { width: 72px !important; }
 nav a, nav button { width: 48px !important; justify-content: center !important; }
 nav a > span > span:last-child, nav button > span > span:last-child { display: none !important; }
+${SEL.banner} { width: 88px !important; }
+${SEL.banner} span[class*="r-poiln3"] { display: none !important; }
 `);
     }
 
-    if (settings.hideTabs) out.push(`${SEL.tabHeader} { display: none !important; }`);
+    if (settings.hideTabs) {
+      out.push(`
+${SEL.tabHeaderXds} { display: none !important; }
+${SEL.tablist} { display: none !important; }
+div[data-testid="primaryColumn"] div:has(> [role="tablist"]) {
+  height: 0 !important; min-height: 0 !important; padding: 0 !important;
+  margin: 0 !important; overflow: hidden !important; border: 0 !important;
+}
+`);
+    }
+
     if (settings.hideViews) out.push(`${SEL.viewCount} { display: none !important; }`);
 
     if (settings.noBorders) {
       out.push(`
-main[class*="border-normal"], ${SEL.aside}, div[class*="border-b-[0.5px]"] {
+main[class*="border-normal"], ${SEL.asideXds}, ${SEL.mainRwn},
+div[class*="border-b-[0.5px]"] {
   border-color: transparent !important;
 }
 `);
@@ -388,6 +426,12 @@ main[class*="border-normal"], ${SEL.aside}, div[class*="border-b-[0.5px]"] {
     store.write(settings);
   }
 
+  // Belt and braces: a pending debounce must not be lost when the tab goes away.
+  window.addEventListener('pagehide', () => { try { save(); } catch (_) {} });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') { try { save(); } catch (_) {} }
+  });
+
   function setSetting(key, value) {
     settings[key] = value;
     if (key === 'mainWidth') settings.mainWidth = clampWidth(value);
@@ -399,7 +443,9 @@ main[class*="border-normal"], ${SEL.aside}, div[class*="border-b-[0.5px]"] {
   function ensureHandle() {
     const main = getMain();
     if (!main) return;
-    if (main.querySelector(`:scope > .${SCRIPT_ID}-handle`)) return;
+    // Rebuild unconditionally: a handle left in the column by another copy would
+    // look identical but its listeners would drive that copy's settings.
+    main.querySelectorAll(`:scope > .${SCRIPT_ID}-handle`).forEach((h) => h.remove());
     const handle = document.createElement('div');
     handle.className = `${SCRIPT_ID}-handle`;
     handle.title = '拖动调整时间线宽度（双击重置）';
@@ -407,38 +453,50 @@ main[class*="border-normal"], ${SEL.aside}, div[class*="border-b-[0.5px]"] {
     let startX = 0;
     let startW = 0;
     let dragging = false;
+    let saveTimer = 0;
+
+    // Persist on a short debounce during the drag, so a lost pointerup (release
+    // outside the window, shell re-render mid-drag) can never lose the width.
+    const saveSoon = () => {
+      if (saveTimer) return;
+      saveTimer = window.setTimeout(() => { saveTimer = 0; save(); }, 120);
+    };
+
+    const onMove = (e) => {
+      if (!dragging) return;
+      const next = clampWidth(startW + (e.clientX - startX));
+      if (next === settings.mainWidth) return;
+      applyWidth(next);
+      saveSoon();
+    };
+
+    const onUp = () => {
+      if (!dragging) return;
+      dragging = false;
+      window.removeEventListener('pointermove', onMove, true);
+      window.removeEventListener('pointerup', onUp, true);
+      window.removeEventListener('pointercancel', onUp, true);
+      handle.classList.remove(`${SCRIPT_ID}-dragging`);
+      document.body.classList.remove(`${SCRIPT_ID}-resizing`);
+      if (saveTimer) { window.clearTimeout(saveTimer); saveTimer = 0; }
+      save();
+    };
 
     handle.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       dragging = true;
       startX = e.clientX;
-      startW = main.getBoundingClientRect().width;
-      handle.setPointerCapture?.(e.pointerId);
+      startW = getMain()?.getBoundingClientRect().width || settings.mainWidth;
+      // Window-level listeners: the handle is only 5px wide, so a normal drag
+      // leaves it within a few frames.
+      window.addEventListener('pointermove', onMove, true);
+      window.addEventListener('pointerup', onUp, true);
+      window.addEventListener('pointercancel', onUp, true);
       handle.classList.add(`${SCRIPT_ID}-dragging`);
       document.body.classList.add(`${SCRIPT_ID}-resizing`);
       e.preventDefault();
       e.stopPropagation();
     });
-
-    handle.addEventListener('pointermove', (e) => {
-      if (!dragging) return;
-      const next = clampWidth(startW + (e.clientX - startX));
-      settings.mainWidth = next;
-      applyWidth(next);
-      syncPanel();
-      e.preventDefault();
-    });
-
-    const end = (e) => {
-      if (!dragging) return;
-      dragging = false;
-      handle.classList.remove(`${SCRIPT_ID}-dragging`);
-      document.body.classList.remove(`${SCRIPT_ID}-resizing`);
-      try { handle.releasePointerCapture(e.pointerId); } catch (_) {}
-      save();
-    };
-    handle.addEventListener('pointerup', end);
-    handle.addEventListener('pointercancel', end);
 
     handle.addEventListener('dblclick', (e) => {
       e.preventDefault();
@@ -463,7 +521,15 @@ main[class*="border-normal"], ${SEL.aside}, div[class*="border-b-[0.5px]"] {
   ];
 
   function buildPanel() {
-    if (document.querySelector(`.${SCRIPT_ID}-panel`)) return;
+    if (panelEl && panelEl.isConnected) return;
+    // A panel present at boot time cannot belong to this instance (we build ours
+    // below), so it is an orphan from a dead/previous copy: drop it and rebuild,
+    // otherwise the stale panel would render numbers we no longer control.
+    const orphan = document.querySelector(`.${SCRIPT_ID}-panel`);
+    if (orphan) {
+      orphan.remove();
+      document.querySelector(`.${SCRIPT_ID}-fab`)?.remove();
+    }
 
     fabEl = document.createElement('button');
     fabEl.className = `${SCRIPT_ID}-fab`;
